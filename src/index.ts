@@ -1,72 +1,106 @@
-import { PrismaClient } from "@prisma/client";
 import express from "express";
+import { PrismaClient } from "@prisma/client";
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
 
-const prisma = new PrismaClient();
+
 
 const app = express();
 const port = process.env.PORT || 3000;
+const prisma = new PrismaClient();
 
 app.use(express.json());
 app.use(express.raw({ type: "application/vnd.custom-type" }));
 app.use(express.text({ type: "text/html" }));
 
-app.get("/todos", async (req, res) => {
-  const todos = await prisma.todo.findMany({
-    orderBy: { createdAt: "desc" },
-  });
 
-  res.json(todos);
+app.post("/user", async (req, res) => {  
+    const {name,email,password} = req.body;
+    if (!name) {
+      return res.status(400).json({ message: 'O nome é obrigatório' })
+    }  
+    if (!email) {
+      return res.status(400).json({ message: 'O e-mail é obrigatório' })
+    }
+    if (!email) {
+      return res.status(400).json({ message: 'A senha é obrigatória' })
+    }
+    const userExists = await prisma.user.findFirst({where: {email: email}});
+    if (userExists) {
+      return res.status(400).json({ message: 'e-mail já cadastrado' })
+    }
+  
+    const hashPassword = await bcrypt.hash(password, 10)
+    
+    try {
+      const newUser = await prisma.user.create({
+        data: {
+          name,
+          email,
+          password: hashPassword 
+        },
+      }); 
+      const { password: _, ...user } = newUser
+  
+      return res.json(user);
+    } catch (error) {
+        return res.status(500).json({ message: 'Internal Server Error' })
+    }
+      
 });
 
-app.post("/todos", async (req, res) => {
-  const todo = await prisma.todo.create({
-    data: {
-      completed: false,
-      createdAt: new Date(),
-      text: req.body.text ?? "Empty todo",
-    },
-  });
-
-  return res.json(todo);
+app.get("/users", async (req, res) => {  
+    try {
+      const users = await prisma.user.findMany({
+          select: {
+            password: false,
+            name: true,
+            email: true,
+            createdAt: true
+          },
+          orderBy: [
+            {
+              createdAt: 'desc',
+            },
+          ]
+          });
+          res.json(users);
+      } catch (error) {
+        return res.status(500).json({ message: 'Internal Server Error' })
+    }
 });
 
-app.get("/todos/:id", async (req, res) => {
-  const id = req.params.id;
-  const todo = await prisma.todo.findUnique({
-    where: { id },
-  });
-
-  return res.json(todo);
-});
-
-app.put("/todos/:id", async (req, res) => {
-  const id = req.params.id;
-  const todo = await prisma.todo.update({
-    where: { id },
-    data: req.body,
-  });
-
-  return res.json(todo);
-});
-
-app.delete("/todos/:id", async (req, res) => {
-  const id = req.params.id;
-  await prisma.todo.delete({
-    where: { id },
-  });
-
-  return res.send({ status: "ok" });
+app.post("/login", async (req, res) => {  
+    const { email, password } = req.body
+  
+    const user = await prisma.user.findFirst({ where: { email: email }});
+  
+    if (!user) {
+      return res.status(400).json({ message: 'e-mail/Senha inválidos' })
+    }
+    
+    const verifyPass = await bcrypt.compare(password, user.password)
+  
+    if (!verifyPass) {
+      return res.status(400).json({ message: 'e-mail/Senha inválidos' })
+    }
+    
+    const token = jwt.sign({ id: user.id }, process.env.JWT_PASS ?? '', {
+      expiresIn: '8h',
+    })
+  
+    const { password: _, ...userLogin } = user
+  
+    return res.json({
+      user: userLogin,
+      token: token,
+    })
 });
 
 app.get("/", async (req, res) => {
   res.send(
     `
-  <h1>Todo REST API</h1>
-  <h2>Available Routes</h2>
-  <pre>
-    GET, POST /todos
-    GET, PUT, DELETE /todos/:id
-  </pre>
+  <h1>User REST API</h1>
   `.trim(),
   );
 });
